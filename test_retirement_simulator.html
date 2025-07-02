@@ -38,12 +38,27 @@
     function simulateRetirement(opts) {
       const {
         startAge, retirementAge, pensionStartAge, gapIncome,
-        salary, monthlyPension,
+        salary, salaryChanges, monthlyPension,
         initialCash, initialInv,
         expenseCurrent, expenseGap, expenseRetired,
         investRate, annualInterest,
         eventProb, eventTypes
       } = opts;
+
+      // 年齢に応じた給与を取得する関数
+      function getCurrentSalary(age) {
+        let currentSalary = salary;
+        if (salaryChanges && salaryChanges.length > 0) {
+          // 年齢に応じて適用される給与変更を探す（降順でソート済み）
+          for (const change of salaryChanges) {
+            if (age >= change.age) {
+              currentSalary = change.salary;
+              break;
+            }
+          }
+        }
+        return currentSalary;
+      }
 
       let cash = initialCash;
       let investBal = initialInv;
@@ -58,15 +73,20 @@
             listLines.push(`== ${age}歳 1月: 投資利息 ==`);
             listLines.push(`  投資: ¥${before.toLocaleString()} → ¥${Math.round(investBal).toLocaleString()}`);
           }
-          // 収入判定
-          let incomeText = '';
-          if(age < retirementAge){
-            const net = calculateNetMonthly(salary);
-            const invAmt = net * investRate;
-            investBal += invAmt;
-            cash += (net - invAmt);
-            incomeText = `給与: ¥${Math.round(net).toLocaleString()} (投資: ¥${Math.round(invAmt).toLocaleString()})`;
-          } else if(age < pensionStartAge){
+                     // 収入判定
+           let incomeText = '';
+           if(age < retirementAge){
+             const currentSalary = getCurrentSalary(age);
+             const net = calculateNetMonthly(currentSalary);
+             const invAmt = net * investRate;
+             investBal += invAmt;
+             cash += (net - invAmt);
+             incomeText = `給与: ¥${Math.round(net).toLocaleString()} (投資: ¥${Math.round(invAmt).toLocaleString()})`;
+             // 給与変更があった場合は年収も表示
+             if (currentSalary !== salary) {
+               incomeText += ` [年収: ¥${currentSalary.toLocaleString()}]`;
+             }
+           } else if(age < pensionStartAge){
             cash += gapIncome;
             incomeText = `退職後収入: ¥${gapIncome.toLocaleString()}`;
           } else {
@@ -326,6 +346,95 @@
       assertTrue(listResults.length > 0, '投資率150%でも処理される');
     });
 
+    // 給与変更機能のテスト
+    suite.test('給与変更機能のテスト', () => {
+      const listSalaryChanges = [
+        {age: 35, salary: 4000000}   // 35歳で400万円に転職
+      ];
+      const listOptions = {
+        startAge: 30, retirementAge: 40, pensionStartAge: 40, gapIncome: 0,
+        salary: 3000000, salaryChanges: listSalaryChanges, monthlyPension: 0,
+        initialCash: 100000, initialInv: 0,
+        expenseCurrent: 100000, expenseGap: 0, expenseRetired: 0,
+        investRate: 0.1, annualInterest: 0,
+        eventProb: 0, eventTypes: []
+      };
+      const listResults = simulateRetirement(listOptions);
+      
+      // シミュレーション結果が存在することを確認
+      assertTrue(listResults.length > 0, 'シミュレーション結果が生成されている');
+      
+      // 30歳の給与（基本給与）を確認
+      const list30Lines = listResults.filter(line => line.includes('-- 30歳1月 --'));
+      assertTrue(list30Lines.length > 0, '30歳1月の区切り行が存在する');
+      
+      // 給与行の存在を確認
+      const listSalaryLines = listResults.filter(line => line.includes('給与:'));
+      assertTrue(listSalaryLines.length > 0, '給与行が存在する');
+      
+      // 35歳以降に年収表示があることを確認
+      const list35AfterLines = listResults.filter(line => line.includes('[年収:'));
+      assertTrue(list35AfterLines.length > 0, '35歳以降に年収表示がある');
+      
+      // 35歳1月の近くに転職による年収変更があることを確認
+      let found35Change = false;
+      for (let i = 0; i < listResults.length - 3; i++) {
+        if (listResults[i].includes('-- 35歳1月 --')) {
+          // 35歳1月の区切り行の後数行以内に年収表示があるかチェック
+          for (let j = i + 1; j <= i + 3 && j < listResults.length; j++) {
+            if (listResults[j].includes('[年収: ¥4,000,000]')) {
+              found35Change = true;
+              break;
+            }
+          }
+          break;
+        }
+      }
+      assertTrue(found35Change, '35歳1月に転職による給与変更が適用される');
+    });
+
+    // 基本的な給与変更テスト（より簡単）
+    suite.test('基本的な給与変更テスト', () => {
+      const listSalaryChanges = [
+        {age: 32, salary: 3500000}   // 32歳で350万円に昇給
+      ];
+      const listOptions = {
+        startAge: 30, retirementAge: 35, pensionStartAge: 35, gapIncome: 0,
+        salary: 3000000, salaryChanges: listSalaryChanges, monthlyPension: 0,
+        initialCash: 100000, initialInv: 0,
+        expenseCurrent: 50000, expenseGap: 0, expenseRetired: 0,
+        investRate: 0, annualInterest: 0,
+        eventProb: 0, eventTypes: []
+      };
+      const listResults = simulateRetirement(listOptions);
+      
+      // シミュレーション結果が存在することを確認
+      assertTrue(listResults.length > 0, 'シミュレーション結果が生成されている');
+      
+      // 32歳以降に年収表示があることを確認（給与変更があったから）
+      const listYearSalaryDisplay = listResults.filter(line => line.includes('[年収: ¥3,500,000]'));
+      assertTrue(listYearSalaryDisplay.length > 0, '32歳以降に昇給後の年収表示がある');
+    });
+
+    suite.test('給与変更なしでも動作するテスト', () => {
+      const listOptions = {
+        startAge: 30, retirementAge: 35, pensionStartAge: 35, gapIncome: 0,
+        salary: 3000000, salaryChanges: [], monthlyPension: 0,
+        initialCash: 0, initialInv: 0,
+        expenseCurrent: 100000, expenseGap: 0, expenseRetired: 0,
+        investRate: 0, annualInterest: 0,
+        eventProb: 0, eventTypes: []
+      };
+      const listResults = simulateRetirement(listOptions);
+      assertTrue(listResults.length > 0, '給与変更なしでもシミュレーション実行可能');
+      
+      // salaryChangesがundefinedでも動作することを確認
+      const listOptionsUndefined = { ...listOptions };
+      delete listOptionsUndefined.salaryChanges;
+      const listResultsUndefined = simulateRetirement(listOptionsUndefined);
+      assertTrue(listResultsUndefined.length > 0, 'salaryChanges未定義でもシミュレーション実行可能');
+    });
+
     // 統合テスト
     suite.test('30年間のライフサイクル統合テスト', () => {
       const listEventTypes = [
@@ -333,7 +442,7 @@
       ];
       const listOptions = {
         startAge: 30, retirementAge: 60, pensionStartAge: 65, gapIncome: 50000,
-        salary: 4000000, monthlyPension: 180000,
+        salary: 4000000, salaryChanges: [], monthlyPension: 180000,
         initialCash: 500000, initialInv: 200000,
         expenseCurrent: 180000, expenseGap: 220000, expenseRetired: 250000,
         investRate: 0.25, annualInterest: 0.05,

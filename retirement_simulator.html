@@ -25,6 +25,20 @@
     <label>年金開始年齢: <input id="pensionStartAge" type="number" value="65" min="0"></label>
     <label>退職後収入(月額): <input id="gapIncome" type="number" value="0" min="0"></label>
     <label>給与(年収): <input id="salary" type="number" value="3000000" min="0"></label>
+    
+    <div style="margin: 10px 0;">
+      <button type="button" id="toggleSalaryChanges" style="background-color: #e7f3ff; border: 1px solid #b3d9ff; padding: 5px 10px; cursor: pointer; border-radius: 3px;">
+        📈 給与変更設定を表示/非表示
+      </button>
+    </div>
+    
+    <div id="salaryChanges" style="display: none; border: 1px solid #ddd; padding: 10px; margin: 10px 0; background-color: #f9f9f9; border-radius: 5px;">
+      <h4 style="margin: 0 0 10px 0; color: #333;">転職・昇進による給与変更</h4>
+      <div id="salaryChangesList"></div>
+      <button type="button" id="addSalaryChange" style="background-color: #4CAF50; color: white; border: none; padding: 5px 10px; cursor: pointer; border-radius: 3px; margin-top: 10px;">
+        ➕ 給与変更を追加
+      </button>
+    </div>
     <label>年金月額: <input id="monthlyPension" type="number" value="145000" min="0"></label>
     <label>開始時貯金: <input id="initialCash" type="number" value="1000000" min="0"></label>
     <label>開始時投資残高: <input id="initialInv" type="number" value="0" min="0"></label>
@@ -57,12 +71,27 @@
     function simulateRetirement(opts) {
       const {
         startAge, retirementAge, pensionStartAge, gapIncome,
-        salary, monthlyPension,
+        salary, salaryChanges, monthlyPension,
         initialCash, initialInv,
         expenseCurrent, expenseGap, expenseRetired,
         investRate, annualInterest,
         eventProb, eventTypes
       } = opts;
+
+      // 年齢に応じた給与を取得する関数
+      function getCurrentSalary(age) {
+        let currentSalary = salary;
+        if (salaryChanges && salaryChanges.length > 0) {
+          // 年齢に応じて適用される給与変更を探す（降順でソート済み）
+          for (const change of salaryChanges) {
+            if (age >= change.age) {
+              currentSalary = change.salary;
+              break;
+            }
+          }
+        }
+        return currentSalary;
+      }
 
       let cash = initialCash;
       let investBal = initialInv;
@@ -80,11 +109,16 @@
           // 収入判定
           let incomeText = '';
           if(age < retirementAge){
-            const net = calculateNetMonthly(salary);
+            const currentSalary = getCurrentSalary(age);
+            const net = calculateNetMonthly(currentSalary);
             const invAmt = net * investRate;
             investBal += invAmt;
             cash += (net - invAmt);
             incomeText = `給与: ¥${Math.round(net).toLocaleString()} (投資: ¥${Math.round(invAmt).toLocaleString()})`;
+            // 給与変更があった場合は年収も表示
+            if (currentSalary !== salary) {
+              incomeText += ` [年収: ¥${currentSalary.toLocaleString()}]`;
+            }
           } else if(age < pensionStartAge){
             cash += gapIncome;
             incomeText = `退職後収入: ¥${gapIncome.toLocaleString()}`;
@@ -128,10 +162,24 @@
 
     function runSimulation(){
       const get = id => parseFloat(document.getElementById(id).value) || 0;
+      
+      // 給与変更設定を取得
+      const salaryChanges = [];
+      const salaryChangeElements = document.querySelectorAll('.salary-change-item');
+      salaryChangeElements.forEach(element => {
+        const age = parseFloat(element.querySelector('.salary-change-age').value);
+        const salary = parseFloat(element.querySelector('.salary-change-salary').value);
+        if (age > 0 && salary > 0) {
+          salaryChanges.push({ age, salary });
+        }
+      });
+      // 年齢の降順でソート（新しい設定が優先）
+      salaryChanges.sort((a, b) => b.age - a.age);
+      
       const opts = {
         startAge: get('startAge'), retirementAge: get('retirementAge'),
         pensionStartAge: get('pensionStartAge'), gapIncome: get('gapIncome'),
-        salary: get('salary'), monthlyPension: get('monthlyPension'),
+        salary: get('salary'), salaryChanges: salaryChanges, monthlyPension: get('monthlyPension'),
         initialCash: get('initialCash'), initialInv: get('initialInv'),
         expenseCurrent: get('expenseCurrent'), expenseGap: get('expenseGap'), expenseRetired: get('expenseRetired'),
         investRate: get('investRate')/100, annualInterest: get('interest')/100,
@@ -162,7 +210,49 @@
     document.addEventListener('DOMContentLoaded',()=>{
       runTests();
       document.getElementById('runBtn').addEventListener('click',runSimulation);
+      
+      // 給与変更設定の表示/非表示トグル
+      document.getElementById('toggleSalaryChanges').addEventListener('click', function() {
+        const salaryChanges = document.getElementById('salaryChanges');
+        if (salaryChanges.style.display === 'none') {
+          salaryChanges.style.display = 'block';
+        } else {
+          salaryChanges.style.display = 'none';
+        }
+      });
+      
+      // 給与変更を追加
+      document.getElementById('addSalaryChange').addEventListener('click', function() {
+        addSalaryChangeItem();
+      });
     });
+
+    // 給与変更項目を追加する関数
+    function addSalaryChangeItem() {
+      const container = document.getElementById('salaryChangesList');
+      const itemCount = container.children.length;
+      
+      const itemDiv = document.createElement('div');
+      itemDiv.className = 'salary-change-item';
+      itemDiv.style.cssText = 'margin: 5px 0; padding: 10px; border: 1px solid #ccc; border-radius: 3px; background-color: white;';
+      
+      itemDiv.innerHTML = `
+        <div style="display: flex; align-items: center; gap: 10px;">
+          <label style="margin: 0;">
+            年齢: <input type="number" class="salary-change-age" min="0" max="100" style="width: 60px;" placeholder="35">歳から
+          </label>
+          <label style="margin: 0;">
+            年収: <input type="number" class="salary-change-salary" min="0" style="width: 120px;" placeholder="4000000">円
+          </label>
+          <button type="button" onclick="this.parentElement.parentElement.remove()" 
+                  style="background-color: #f44336; color: white; border: none; padding: 3px 8px; cursor: pointer; border-radius: 3px;">
+            削除
+          </button>
+        </div>
+      `;
+      
+      container.appendChild(itemDiv);
+    }
   </script>
 </body>
 </html>
