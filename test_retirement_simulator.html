@@ -86,14 +86,15 @@
             cash -= e.cost;
             listEvents.push(`▶ ${e.name}: ¥${e.cost.toLocaleString()}`);
           }
-          // 投資補填
-          if(cash < 0 && investBal > 0){
-            const need = -cash;
-            const draw = Math.min(investBal, need);
-            investBal -= draw;
-            cash += draw;
-            listEvents.push(`🔄 投資から補填: ¥${draw.toLocaleString()}`);
-          }
+                     // 投資補填
+           if(cash < 0 && investBal > 0){
+             const need = -cash;
+             const draw = Math.min(investBal, need);
+             const tax = draw * 0.2;  // 20%の税金
+             investBal -= (draw + tax);  // 補填額 + 税金を引く
+             cash += draw;  // 現金には補填額のみ追加
+             listEvents.push(`🔄 投資から補填: ¥${draw.toLocaleString()} (税金: ¥${Math.round(tax).toLocaleString()})`);
+           }
           // 出力
           listLines.push(`-- ${age}歳${m}月 --`);
           listLines.push(`  ${incomeText}`);
