@@ -1,0 +1,363 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>老後資金シミュレーター テストスイート</title>
+  <style>
+    body { font-family: Arial, sans-serif; padding: 20px; }
+    .test-section { margin-bottom: 30px; border: 1px solid #ddd; padding: 15px; }
+    .test-result { margin: 5px 0; padding: 5px; border-radius: 3px; }
+    .pass { background-color: #d4edda; color: #155724; }
+    .fail { background-color: #f8d7da; color: #721c24; }
+    .test-summary { font-weight: bold; font-size: 18px; margin-bottom: 20px; }
+    pre { background: #f8f9fa; padding: 10px; border-radius: 5px; overflow-x: auto; }
+  </style>
+</head>
+<body>
+  <h1>老後資金シミュレーター テストスイート</h1>
+  <div id="test-output"></div>
+
+  <script>
+    // シミュレーターの関数を読み込み（実際のファイルからコピー）
+    function calculateNetMonthly(salaryAnnual) {
+      const social = salaryAnnual * 0.14;
+      const taxable = Math.max(0, salaryAnnual - social - 480000);
+      const brackets = [
+        { up:1950000, rate:0.05 },{ up:3300000, rate:0.10 },
+        { up:6950000, rate:0.20 },{ up:9000000, rate:0.23 },
+        { up:18000000, rate:0.33 },{ up:40000000, rate:0.40 },
+        { up:Infinity, rate:0.45 }
+      ];
+      let tax=0, prev=0;
+      for(const b of brackets){ if(taxable<=prev) break; const amt=Math.min(b.up, taxable)-prev; tax+=amt*b.rate; prev=b.up; }
+      const resident = taxable * 0.10;
+      return (salaryAnnual - social - tax - resident) / 12;
+    }
+
+    function simulateRetirement(opts) {
+      const {
+        startAge, retirementAge, pensionStartAge, gapIncome,
+        salary, monthlyPension,
+        initialCash, initialInv,
+        expenseCurrent, expenseGap, expenseRetired,
+        investRate, annualInterest,
+        eventProb, eventTypes
+      } = opts;
+
+      let cash = initialCash;
+      let investBal = initialInv;
+      const listLines = [];
+
+      for(let age = startAge; age <= 100; age++){
+        for(let m = 1; m <= 12; m++){
+          // 年初 投資残高へ利息適用
+          if(m === 1 && age > startAge){
+            const before = investBal;
+            investBal *= (1 + annualInterest);
+            listLines.push(`== ${age}歳 1月: 投資利息 ==`);
+            listLines.push(`  投資: ¥${before.toLocaleString()} → ¥${Math.round(investBal).toLocaleString()}`);
+          }
+          // 収入判定
+          let incomeText = '';
+          if(age < retirementAge){
+            const net = calculateNetMonthly(salary);
+            const invAmt = net * investRate;
+            investBal += invAmt;
+            cash += (net - invAmt);
+            incomeText = `給与: ¥${Math.round(net).toLocaleString()} (投資: ¥${Math.round(invAmt).toLocaleString()})`;
+          } else if(age < pensionStartAge){
+            cash += gapIncome;
+            incomeText = `退職後収入: ¥${gapIncome.toLocaleString()}`;
+          } else {
+            cash += monthlyPension;
+            incomeText = `年金: ¥${monthlyPension.toLocaleString()}`;
+          }
+          // 生活費差引
+          let cost;
+          if(age < retirementAge) cost = expenseCurrent;
+          else if(age < pensionStartAge) cost = expenseGap;
+          else cost = expenseRetired;
+          cash -= cost;
+          // イベント
+          const listEvents = [];
+          if(Math.random() < eventProb){
+            const e = eventTypes[Math.floor(Math.random()*eventTypes.length)];
+            cash -= e.cost;
+            listEvents.push(`▶ ${e.name}: ¥${e.cost.toLocaleString()}`);
+          }
+          // 投資補填
+          if(cash < 0 && investBal > 0){
+            const need = -cash;
+            const draw = Math.min(investBal, need);
+            investBal -= draw;
+            cash += draw;
+            listEvents.push(`🔄 投資から補填: ¥${draw.toLocaleString()}`);
+          }
+          // 出力
+          listLines.push(`-- ${age}歳${m}月 --`);
+          listLines.push(`  ${incomeText}`);
+          listLines.push(`  生活費: ¥${cost.toLocaleString()}`);
+          listEvents.forEach(l => listLines.push(`  ${l}`));
+          const total = cash + investBal;
+          listLines.push(`  現金: ¥${Math.round(cash).toLocaleString()} 投資: ¥${Math.round(investBal).toLocaleString()} 総資産: ¥${Math.round(total).toLocaleString()}`);
+        }
+      }
+      return listLines;
+    }
+
+    // テストフレームワーク
+    class TestSuite {
+      constructor() {
+        this.listTests = [];
+        this.listResults = [];
+      }
+
+      test(name, testFn) {
+        this.listTests.push({ name, testFn });
+      }
+
+      run() {
+        this.listResults = [];
+        for(const test of this.listTests) {
+          try {
+            test.testFn();
+            this.listResults.push({ name: test.name, passed: true, error: null });
+          } catch (error) {
+            this.listResults.push({ name: test.name, passed: false, error: error.message });
+          }
+        }
+        this.displayResults();
+      }
+
+      displayResults() {
+        const output = document.getElementById('test-output');
+        const passed = this.listResults.filter(r => r.passed).length;
+        const total = this.listResults.length;
+        
+        output.innerHTML = `
+          <div class="test-summary ${passed === total ? 'pass' : 'fail'}">
+            テスト結果: ${passed}/${total} 通過
+          </div>
+        `;
+
+        for(const result of this.listResults) {
+          const div = document.createElement('div');
+          div.className = `test-result ${result.passed ? 'pass' : 'fail'}`;
+          div.innerHTML = `
+            <strong>${result.passed ? '✓' : '✗'} ${result.name}</strong>
+            ${result.error ? `<br><small>エラー: ${result.error}</small>` : ''}
+          `;
+          output.appendChild(div);
+        }
+      }
+    }
+
+    function assertEquals(actual, expected, message = '') {
+      if (actual !== expected) {
+        throw new Error(`期待値: ${expected}, 実際: ${actual} ${message}`);
+      }
+    }
+
+    function assertApproxEquals(actual, expected, tolerance = 0.01, message = '') {
+      if (Math.abs(actual - expected) > tolerance) {
+        throw new Error(`期待値: ${expected} (±${tolerance}), 実際: ${actual} ${message}`);
+      }
+    }
+
+    function assertTrue(condition, message = '') {
+      if (!condition) {
+        throw new Error(`条件が false です ${message}`);
+      }
+    }
+
+    function assertContains(text, substring, message = '') {
+      if (!text.includes(substring)) {
+        throw new Error(`"${substring}" が見つかりません in "${text}" ${message}`);
+      }
+    }
+
+    // テスト実行
+    const suite = new TestSuite();
+
+    // calculateNetMonthly のテスト
+    suite.test('年収0円の場合は手取り0円', () => {
+      assertEquals(calculateNetMonthly(0), 0);
+    });
+
+    suite.test('年収300万円の手取り計算', () => {
+      const result = calculateNetMonthly(3000000);
+      assertTrue(result > 0, '手取りは正の値である必要があります');
+      assertTrue(result < 3000000 / 12, '手取りは年収÷12より少ない必要があります');
+      assertApproxEquals(result, 188125, 1000, '年収300万円の月手取りは約18.8万円');
+    });
+
+    suite.test('年収600万円の手取り計算', () => {
+      const result = calculateNetMonthly(6000000);
+      assertTrue(result > calculateNetMonthly(3000000), '年収が高いほど手取りも多い');
+      assertApproxEquals(result, 348625, 1000, '年収600万円の月手取りは約34.9万円');
+    });
+
+    suite.test('年収1000万円の手取り計算（高所得税率適用）', () => {
+      const result = calculateNetMonthly(10000000);
+      assertTrue(result > calculateNetMonthly(6000000), '年収が高いほど手取りも多い');
+      assertApproxEquals(result, 546367, 1000, '年収1000万円の月手取りは約54.6万円');
+    });
+
+    // simulateRetirement のテスト
+    suite.test('基本的なシミュレーション実行テスト', () => {
+      const listOptions = {
+        startAge: 30, retirementAge: 65, pensionStartAge: 65, gapIncome: 0,
+        salary: 3000000, monthlyPension: 150000,
+        initialCash: 1000000, initialInv: 0,
+        expenseCurrent: 150000, expenseGap: 200000, expenseRetired: 200000,
+        investRate: 0.2, annualInterest: 0.04,
+        eventProb: 0, eventTypes: []
+      };
+      const listResults = simulateRetirement(listOptions);
+      assertTrue(listResults.length > 0, 'シミュレーション結果が生成されている');
+      assertContains(listResults[0], '30歳1月', '開始年齢が正しく反映されている');
+    });
+
+    suite.test('退職後収入期間のテスト', () => {
+      const listOptions = {
+        startAge: 65, retirementAge: 65, pensionStartAge: 67, gapIncome: 50000,
+        salary: 0, monthlyPension: 150000,
+        initialCash: 1000000, initialInv: 0,
+        expenseCurrent: 100000, expenseGap: 200000, expenseRetired: 200000,
+        investRate: 0, annualInterest: 0,
+        eventProb: 0, eventTypes: []
+      };
+      const listResults = simulateRetirement(listOptions);
+      const listGapPeriod = listResults.filter(line => line.includes('退職後収入'));
+      assertTrue(listGapPeriod.length > 0, '退職後収入期間が存在する');
+      assertContains(listGapPeriod[0], '¥50,000', '退職後収入金額が正しい');
+    });
+
+    suite.test('年金受給期間のテスト', () => {
+      const listOptions = {
+        startAge: 67, retirementAge: 65, pensionStartAge: 67, gapIncome: 0,
+        salary: 0, monthlyPension: 150000,
+        initialCash: 1000000, initialInv: 0,
+        expenseCurrent: 100000, expenseGap: 200000, expenseRetired: 200000,
+        investRate: 0, annualInterest: 0,
+        eventProb: 0, eventTypes: []
+      };
+      const listResults = simulateRetirement(listOptions);
+      const listPensionPeriod = listResults.filter(line => line.includes('年金'));
+      assertTrue(listPensionPeriod.length > 0, '年金受給期間が存在する');
+      assertContains(listPensionPeriod[0], '¥150,000', '年金金額が正しい');
+    });
+
+    suite.test('投資利回りの適用テスト', () => {
+      const listOptions = {
+        startAge: 30, retirementAge: 31, pensionStartAge: 31, gapIncome: 0,
+        salary: 0, monthlyPension: 0,
+        initialCash: 0, initialInv: 1000000,
+        expenseCurrent: 0, expenseGap: 0, expenseRetired: 0,
+        investRate: 0, annualInterest: 0.1,
+        eventProb: 0, eventTypes: []
+      };
+      const listResults = simulateRetirement(listOptions);
+      const listInterestLines = listResults.filter(line => line.includes('投資利息') || line.includes('→'));
+      assertTrue(listInterestLines.length > 0, '投資利息が適用されている');
+      const listDetailLine = listResults.find(line => line.includes('¥1,000,000') && line.includes('→'));
+      assertTrue(listDetailLine !== undefined, '投資利息の詳細行が存在する');
+      assertContains(listDetailLine, '¥1,100,000', '10%の利回りが正しく適用されている');
+    });
+
+    suite.test('投資補填機能のテスト', () => {
+      const listOptions = {
+        startAge: 30, retirementAge: 30, pensionStartAge: 30, gapIncome: 0,
+        salary: 0, monthlyPension: 0,
+        initialCash: 50000, initialInv: 100000,
+        expenseCurrent: 0, expenseGap: 0, expenseRetired: 80000,
+        investRate: 0, annualInterest: 0,
+        eventProb: 0, eventTypes: []
+      };
+      const listResults = simulateRetirement(listOptions);
+      const listSupplementLines = listResults.filter(line => line.includes('投資から補填'));
+      assertTrue(listSupplementLines.length > 0, '投資から補填が実行されている');
+    });
+
+    suite.test('現役時投資率のテスト', () => {
+      const listOptions = {
+        startAge: 30, retirementAge: 31, pensionStartAge: 31, gapIncome: 0,
+        salary: 2400000, monthlyPension: 0,
+        initialCash: 0, initialInv: 0,
+        expenseCurrent: 100000, expenseGap: 0, expenseRetired: 0,
+        investRate: 0.5, annualInterest: 0,
+        eventProb: 0, eventTypes: []
+      };
+      const listResults = simulateRetirement(listOptions);
+      const listInvestmentLines = listResults.filter(line => line.includes('投資:'));
+      assertTrue(listInvestmentLines.length > 0, '投資が実行されている');
+    });
+
+    suite.test('エラーケース: 負の年齢', () => {
+      const listOptions = {
+        startAge: -1, retirementAge: 65, pensionStartAge: 65, gapIncome: 0,
+        salary: 3000000, monthlyPension: 150000,
+        initialCash: 1000000, initialInv: 0,
+        expenseCurrent: 150000, expenseGap: 200000, expenseRetired: 200000,
+        investRate: 0.2, annualInterest: 0.04,
+        eventProb: 0, eventTypes: []
+      };
+      // エラーが発生せず、適切に処理されることを確認
+      const listResults = simulateRetirement(listOptions);
+      assertTrue(listResults.length >= 0, '負の年齢でもエラーが発生しない');
+    });
+
+    suite.test('エラーケース: 無効な投資率', () => {
+      const result1 = calculateNetMonthly(3000000);
+      assertTrue(result1 > 0, '正常な年収で手取りが計算される');
+      
+      // 投資率が100%を超える場合
+      const listOptions = {
+        startAge: 30, retirementAge: 31, pensionStartAge: 31, gapIncome: 0,
+        salary: 3000000, monthlyPension: 0,
+        initialCash: 0, initialInv: 0,
+        expenseCurrent: 100000, expenseGap: 0, expenseRetired: 0,
+        investRate: 1.5, annualInterest: 0,
+        eventProb: 0, eventTypes: []
+      };
+      const listResults = simulateRetirement(listOptions);
+      assertTrue(listResults.length > 0, '投資率150%でも処理される');
+    });
+
+    // 統合テスト
+    suite.test('30年間のライフサイクル統合テスト', () => {
+      const listEventTypes = [
+        {name:'医療費',cost:100000},{name:'家電故障',cost:50000}
+      ];
+      const listOptions = {
+        startAge: 30, retirementAge: 60, pensionStartAge: 65, gapIncome: 50000,
+        salary: 4000000, monthlyPension: 180000,
+        initialCash: 500000, initialInv: 200000,
+        expenseCurrent: 180000, expenseGap: 220000, expenseRetired: 250000,
+        investRate: 0.25, annualInterest: 0.05,
+        eventProb: 0, eventTypes: listEventTypes
+      };
+      const listResults = simulateRetirement(listOptions);
+      
+      // 各期間が存在することを確認
+      const listWorkingPeriod = listResults.filter(line => line.includes('給与:'));
+      const listGapPeriod = listResults.filter(line => line.includes('退職後収入:'));
+      const listPensionPeriod = listResults.filter(line => line.includes('年金:'));
+      
+      assertTrue(listWorkingPeriod.length > 0, '現役期間が存在する');
+      assertTrue(listGapPeriod.length > 0, '退職後収入期間が存在する');
+      assertTrue(listPensionPeriod.length > 0, '年金受給期間が存在する');
+      
+      // 投資利息が適用されていることを確認
+      const listInterestLines = listResults.filter(line => line.includes('投資利息'));
+      assertTrue(listInterestLines.length > 0, '投資利息が適用されている');
+    });
+
+    // DOM読み込み完了後にテスト実行
+    document.addEventListener('DOMContentLoaded', () => {
+      suite.run();
+    });
+  </script>
+</body>
+</html> 
